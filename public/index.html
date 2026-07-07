@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Câmeras</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js"></script>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      background: #000;
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      height: 100dvh;
+      overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ── Barra de controles ── */
+    #controls {
+      position: fixed;
+      top: 14px;
+      right: 14px;
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 7px 14px 7px 12px;
+      border-radius: 30px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      user-select: none;
+    }
+
+    #mode-label {
+      font-size: 12px;
+      opacity: 0.75;
+      white-space: nowrap;
+    }
+
+    /* ── Toggle switch ── */
+    .toggle-wrap {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+    }
+
+    .toggle-track {
+      width: 44px;
+      height: 24px;
+      background: #333;
+      border-radius: 12px;
+      position: relative;
+      transition: background 0.25s;
+      flex-shrink: 0;
+    }
+
+    .toggle-track.on { background: #2563eb; }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 18px;
+      height: 18px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.25s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+
+    .toggle-track.on .toggle-thumb { transform: translateX(20px); }
+
+    .toggle-text {
+      font-size: 12px;
+      white-space: nowrap;
+      opacity: 0.9;
+    }
+
+    /* ── Grid 2×2 ── */
+    #grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      height: 100dvh;
+      gap: 2px;
+      background: #111;
+    }
+
+    .cell {
+      position: relative;
+      overflow: hidden;
+      background: #0a0a0a;
+    }
+
+    .cell video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .cell-label {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      background: rgba(0,0,0,0.52);
+      color: rgba(255,255,255,0.85);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      padding: 2px 9px;
+      border-radius: 10px;
+    }
+
+    .cell-status {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ef4444;
+      transition: background 0.5s;
+    }
+    .cell-status.live { background: #22c55e; }
+
+    /* ── Fullscreen rotativo ── */
+    #fullscreen {
+      display: none;
+      height: 100dvh;
+      position: relative;
+      background: #000;
+    }
+
+    #vfs {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    #fs-label {
+      position: fixed;
+      top: 14px;
+      left: 14px;
+      background: rgba(0,0,0,0.52);
+      color: rgba(255,255,255,0.9);
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      padding: 4px 13px;
+      border-radius: 12px;
+      z-index: 150;
+    }
+
+    /* ── Pontos de navegação ── */
+    #dots {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      gap: 8px;
+      z-index: 150;
+      align-items: center;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.3);
+      transition: background 0.3s, transform 0.3s;
+    }
+    .dot.active {
+      background: #fff;
+      transform: scale(1.4);
+    }
+
+    /* ── Barra de progresso ── */
+    #progress-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      height: 3px;
+      width: 0%;
+      background: rgba(255,255,255,0.75);
+      z-index: 150;
+      display: none;
+    }
+
+    /* ── Overlay de carregamento ── */
+    .loading-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0a0a0a;
+      z-index: 10;
+      transition: opacity 0.4s;
+    }
+
+    .loading-overlay.hidden { opacity: 0; pointer-events: none; }
+
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border: 2.5px solid rgba(255,255,255,0.15);
+      border-top-color: rgba(255,255,255,0.7);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Fade entre câmeras ── */
+    #fs-overlay {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+    #fs-overlay.fading { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<!-- Controles -->
+<div id="controls">
+  <span id="mode-label">4 câmeras</span>
+  <div class="toggle-wrap" id="toggle-wrap">
+    <div class="toggle-track" id="toggle-track">
+      <div class="toggle-thumb"></div>
+    </div>
+    <span class="toggle-text" id="toggle-text">Tela cheia rotativa</span>
+  </div>
+</div>
+
+<!-- Modo Grid -->
+<div id="grid">
+  <div class="cell" id="cell0">
+    <div class="loading-overlay" id="loading0"><div class="spinner"></div></div>
+    <video id="v0" autoplay muted playsinline></video>
+    <div class="cell-status" id="status0"></div>
+    <div class="cell-label">CAM 1</div>
+  </div>
+  <div class="cell" id="cell1">
+    <div class="loading-overlay" id="loading1"><div class="spinner"></div></div>
+    <video id="v1" autoplay muted playsinline></video>
+    <div class="cell-status" id="status1"></div>
+    <div class="cell-label">CAM 2</div>
+  </div>
+  <div class="cell" id="cell2">
+    <div class="loading-overlay" id="loading2"><div class="spinner"></div></div>
+    <video id="v2" autoplay muted playsinline></video>
+    <div class="cell-status" id="status2"></div>
+    <div class="cell-label">CAM 3</div>
+  </div>
+  <div class="cell" id="cell3">
+    <div class="loading-overlay" id="loading3"><div class="spinner"></div></div>
+    <video id="v3" autoplay muted playsinline></video>
+    <div class="cell-status" id="status3"></div>
+    <div class="cell-label">CAM 4</div>
+  </div>
+</div>
+
+<!-- Modo Fullscreen rotativo -->
+<div id="fullscreen">
+  <video id="vfs" autoplay muted playsinline></video>
+  <div id="fs-label">CAM 1</div>
+</div>
+
+<!-- Overlay de fade -->
+<div id="fs-overlay"></div>
+
+<!-- Dots e progresso (fullscreen) -->
+<div id="dots"></div>
+<div id="progress-bar"></div>
+
+<script>
+(async () => {
+  // Carrega config do servidor
+  const config = await fetch('/api/config').then(r => r.json()).catch(() => ({ cameras: 4, rotateSeconds: 10 }));
+  const NUM_CAMS = config.cameras;
+  const ROTATE_MS = config.rotateSeconds * 1000;
+
+  const streams = Array.from({ length: NUM_CAMS }, (_, i) => `/streams/cam${i + 1}/index.m3u8`);
+
+  // Remove células desnecessárias se tiver menos de 4 câmeras
+  for (let i = NUM_CAMS; i < 4; i++) {
+    const cell = document.getElementById(`cell${i}`);
+    if (cell) cell.remove();
+  }
+
+  // Ajusta grid se não for 4 câmeras
+  if (NUM_CAMS === 1) {
+    document.getElementById('grid').style.gridTemplate = '1fr / 1fr';
+  } else if (NUM_CAMS <= 2) {
+    document.getElementById('grid').style.gridTemplate = '1fr / 1fr 1fr';
+  } else if (NUM_CAMS === 3) {
+    document.getElementById('grid').style.gridTemplateColumns = '1fr 1fr';
+  }
+
+  // ── HLS helper ──
+  function makeHls(video, url, onReady) {
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        lowLatencyMode: true,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 3,
+        maxBufferLength: 4,
+      });
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {});
+        if (onReady) onReady();
+      });
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          setTimeout(() => {
+            hls.destroy();
+            makeHls(video, url, onReady);
+          }, 3000);
+        }
+      });
+      return hls;
+    } else if (video.canPlayType('application/x-mpegURL')) {
+      video.src = url;
+      video.play().catch(() => {});
+      if (onReady) video.addEventListener('loadeddata', onReady, { once: true });
+      return null;
+    }
+  }
+
+  // ── Grid: inicializa cada câmera ──
+  const gridHls = [];
+  for (let i = 0; i < NUM_CAMS; i++) {
+    const video = document.getElementById(`v${i}`);
+    const loading = document.getElementById(`loading${i}`);
+    const status = document.getElementById(`status${i}`);
+
+    const hls = makeHls(video, streams[i], () => {
+      loading.classList.add('hidden');
+      status.classList.add('live');
+    });
+
+    gridHls.push(hls);
+  }
+
+  // ── Toggle ──
+  let mode = 'grid';
+  let currentCam = 0;
+  let rotateTimer = null;
+  let fsHls = null;
+
+  const toggleTrack = document.getElementById('toggle-track');
+  const toggleText = document.getElementById('toggle-text');
+  const modeLabelEl = document.getElementById('mode-label');
+  const gridEl = document.getElementById('grid');
+  const fsEl = document.getElementById('fullscreen');
+  const fsVideo = document.getElementById('vfs');
+  const fsLabelEl = document.getElementById('fs-label');
+  const dotsEl = document.getElementById('dots');
+  const progressEl = document.getElementById('progress-bar');
+  const overlayEl = document.getElementById('fs-overlay');
+
+  // Cria dots
+  for (let i = 0; i < NUM_CAMS; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'dot' + (i === 0 ? ' active' : '');
+    dotsEl.appendChild(dot);
+  }
+
+  function updateDots(idx) {
+    dotsEl.querySelectorAll('.dot').forEach((d, i) => {
+      d.classList.toggle('active', i === idx);
+    });
+  }
+
+  function startProgress() {
+    progressEl.style.transition = 'none';
+    progressEl.style.width = '0%';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      progressEl.style.transition = `width ${ROTATE_MS}ms linear`;
+      progressEl.style.width = '100%';
+    }));
+  }
+
+  function fadeTo(idx) {
+    overlayEl.classList.add('fading');
+    setTimeout(() => {
+      currentCam = idx;
+      fsLabelEl.textContent = `CAM ${idx + 1}`;
+      updateDots(idx);
+      startProgress();
+
+      if (fsHls) { fsHls.destroy(); fsHls = null; }
+      fsHls = makeHls(fsVideo, streams[idx], () => {});
+
+      overlayEl.classList.remove('fading');
+    }, 300);
+  }
+
+  function startRotation() {
+    fadeTo(currentCam);
+    rotateTimer = setInterval(() => {
+      fadeTo((currentCam + 1) % NUM_CAMS);
+    }, ROTATE_MS);
+  }
+
+  function stopRotation() {
+    clearInterval(rotateTimer);
+    rotateTimer = null;
+    if (fsHls) { fsHls.destroy(); fsHls = null; }
+  }
+
+  document.getElementById('toggle-wrap').addEventListener('click', () => {
+    if (mode === 'grid') {
+      mode = 'fullscreen';
+      toggleTrack.classList.add('on');
+      toggleText.textContent = '4 câmeras simultâneas';
+      modeLabelEl.textContent = 'Tela cheia';
+      gridEl.style.display = 'none';
+      fsEl.style.display = 'block';
+      dotsEl.style.display = 'flex';
+      progressEl.style.display = 'block';
+      startRotation();
+    } else {
+      mode = 'grid';
+      toggleTrack.classList.remove('on');
+      toggleText.textContent = 'Tela cheia rotativa';
+      modeLabelEl.textContent = '4 câmeras';
+      gridEl.style.display = 'grid';
+      fsEl.style.display = 'none';
+      dotsEl.style.display = 'none';
+      progressEl.style.display = 'none';
+      stopRotation();
+    }
+  });
+})();
+</script>
+</body>
+</html>
