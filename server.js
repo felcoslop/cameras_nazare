@@ -43,6 +43,18 @@ const nms = new NodeMediaServer({
 });
 
 // Quando câmera começa a transmitir → inicia FFmpeg → gera HLS
+nms.on('preConnect', (session) => {
+  console.log(`[CONNECT] Tentativa de conexão de: ${session.ip}`);
+});
+
+nms.on('postConnect', (session) => {
+  console.log(`[CONNECT OK] Conectado: ${session.ip}`);
+});
+
+nms.on('prePublish', (session) => {
+  console.log(`[PUBLISH] Tentativa de publicar: ${session.streamPath} de ${session.ip}`);
+});
+
 nms.on('postPublish', (session) => {
   const streamPath = session.streamPath;
   const id = session.id;
