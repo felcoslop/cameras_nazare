@@ -41,90 +41,6 @@
       white-space: nowrap;
     }
 
-    /* ── Botão cast ── */
-    #cast-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 2px 4px;
-      display: flex;
-      align-items: center;
-      opacity: 0.75;
-      transition: opacity 0.2s;
-    }
-    #cast-btn:hover { opacity: 1; }
-
-    #cast-modal {
-      display: none;
-      position: fixed;
-      inset: 0;
-      z-index: 500;
-      align-items: center;
-      justify-content: center;
-    }
-    #cast-modal.open { display: flex; }
-
-    #cast-backdrop {
-      position: absolute;
-      inset: 0;
-      background: rgba(0,0,0,0.7);
-    }
-
-    #cast-box {
-      position: relative;
-      background: #1a1a1a;
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 16px;
-      padding: 24px 28px;
-      width: 320px;
-      z-index: 1;
-    }
-
-    #cast-box h3 {
-      font-size: 15px;
-      margin-bottom: 18px;
-      opacity: 0.9;
-    }
-
-    .cast-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-
-    .cast-icon {
-      font-size: 22px;
-      line-height: 1;
-      flex-shrink: 0;
-    }
-
-    .cast-item p {
-      font-size: 12px;
-      opacity: 0.75;
-      line-height: 1.5;
-    }
-
-    .cast-item strong {
-      display: block;
-      font-size: 13px;
-      opacity: 1;
-      color: #fff;
-      margin-bottom: 2px;
-    }
-
-    #cast-close {
-      margin-top: 18px;
-      width: 100%;
-      padding: 9px;
-      background: rgba(255,255,255,0.08);
-      border: none;
-      border-radius: 10px;
-      color: #fff;
-      font-size: 13px;
-      cursor: pointer;
-    }
-    #cast-close:hover { background: rgba(255,255,255,0.14); }
 
     /* ── Toggle switch ── */
     .toggle-wrap {
@@ -319,52 +235,9 @@
 </head>
 <body>
 
-<!-- Modal cast -->
-<div id="cast-modal">
-  <div id="cast-backdrop"></div>
-  <div id="cast-box">
-    <h3>📺 Como espelhar na TV</h3>
-    <div class="cast-item">
-      <span class="cast-icon">🟠</span>
-      <div>
-        <strong>Chrome (Android ou PC)</strong>
-        <p>Menu ⋮ → <b>Transmitir</b> → seleciona o Chromecast ou TV</p>
-      </div>
-    </div>
-    <div class="cast-item">
-      <span class="cast-icon">🍎</span>
-      <div>
-        <strong>iPhone / iPad (Safari)</strong>
-        <p>Botão compartilhar → <b>AirPlay</b> → seleciona a Samsung TV</p>
-      </div>
-    </div>
-    <div class="cast-item">
-      <span class="cast-icon">📺</span>
-      <div>
-        <strong>Samsung Smart TV (direto)</strong>
-        <p>Abre o navegador da TV e acessa este endereço diretamente</p>
-      </div>
-    </div>
-    <div class="cast-item">
-      <span class="cast-icon">🤖</span>
-      <div>
-        <strong>Android (Smart View)</strong>
-        <p>Barra de notificações → <b>Smart View</b> ou <b>Screen Mirror</b></p>
-      </div>
-    </div>
-    <button id="cast-close">Fechar</button>
-  </div>
-</div>
-
 <!-- Controles -->
 <div id="controls">
   <span id="mode-label">4 câmeras</span>
-  <button id="cast-btn" title="Como espelhar na TV">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
-      <line x1="2" y1="20" x2="2.01" y2="20"/>
-    </svg>
-  </button>
   <div class="toggle-wrap" id="toggle-wrap">
     <div class="toggle-track" id="toggle-track">
       <div class="toggle-thumb"></div>
@@ -551,16 +424,6 @@
     rotateTimer = null;
     if (fsHls) { fsHls.destroy(); fsHls = null; }
   }
-
-  document.getElementById('cast-btn').addEventListener('click', () => {
-    document.getElementById('cast-modal').classList.add('open');
-  });
-  document.getElementById('cast-backdrop').addEventListener('click', () => {
-    document.getElementById('cast-modal').classList.remove('open');
-  });
-  document.getElementById('cast-close').addEventListener('click', () => {
-    document.getElementById('cast-modal').classList.remove('open');
-  });
 
   document.getElementById('toggle-wrap').addEventListener('click', () => {
     if (mode === 'grid') {
