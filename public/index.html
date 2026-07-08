@@ -314,14 +314,16 @@
     document.getElementById('grid').style.gridTemplateColumns = '1fr 1fr';
   }
 
+  const isSamsungTV = /SmartTV|Tizen|SMART-TV/i.test(navigator.userAgent);
+
   // ── HLS helper ──
   function makeHls(video, url, onReady) {
-    // Tenta HLS nativo primeiro (Samsung TV, Safari, Tizen)
-    if (video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL')) {
+    // Samsung TV ou Safari: src direto (HLS nativo)
+    if (isSamsungTV || video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL')) {
       video.src = url;
       video.load();
       video.play().catch(() => {});
-      if (onReady) video.addEventListener('loadeddata', onReady, { once: true });
+      if (onReady) video.addEventListener('canplay', onReady, { once: true });
       return null;
     }
     // Fallback: hls.js (Chrome, Firefox, Android)
