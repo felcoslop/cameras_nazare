@@ -335,14 +335,15 @@
   }
 
   // ── Grid ──
+  const gridHls = [];
   for (let i = 0; i < NUM_CAMS; i++) {
     const video = document.getElementById(`v${i}`);
     const loading = document.getElementById(`loading${i}`);
     const status = document.getElementById(`status${i}`);
-    makeHls(video, streams[i], () => {
+    gridHls.push(makeHls(video, streams[i], () => {
       loading.classList.add('hidden');
       status.classList.add('live');
-    });
+    }));
   }
 
   // ── Fullscreen: crossfade entre câmeras (sem tela preta) ──
