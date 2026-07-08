@@ -223,6 +223,17 @@
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* ── Fade entre câmeras ── */
+    #fs-overlay {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      z-index: 100;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+    }
+    #fs-overlay.fading { opacity: 1; }
   </style>
 </head>
 <body>
@@ -268,8 +279,12 @@
 
 <!-- Modo Fullscreen rotativo -->
 <div id="fullscreen">
+  <video id="vfs" autoplay muted playsinline></video>
   <div id="fs-label">CAM 1</div>
 </div>
+
+<!-- Overlay de fade -->
+<div id="fs-overlay"></div>
 
 <!-- Dots e progresso (fullscreen) -->
 <div id="dots"></div>
@@ -303,6 +318,7 @@
 
   // ── HLS helper ──
   function makeHls(video, url, onReady) {
+    // Samsung TV ou Safari: src direto (HLS nativo)
     if (isSamsungTV || video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL')) {
       video.src = url;
       video.load();
@@ -310,14 +326,13 @@
       if (onReady) video.addEventListener('canplay', onReady, { once: true });
       return null;
     }
+    // Fallback: hls.js (Chrome, Firefox, Android)
     if (Hls.isSupported()) {
       const hls = new Hls({
         lowLatencyMode: true,
-        liveSyncDuration: 1,
-        liveMaxLatencyDuration: 2,
-        maxBufferLength: 2,
-        maxMaxBufferLength: 4,
-        backBufferLength: 0,
+        liveSyncDurationCount: 1,
+        liveMaxLatencyDurationCount: 3,
+        maxBufferLength: 4,
       });
       hls.loadSource(url);
       hls.attachMedia(video);
@@ -327,75 +342,49 @@
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (data.fatal) {
-          setTimeout(() => { hls.destroy(); makeHls(video, url, onReady); }, 3000);
+          setTimeout(() => {
+            hls.destroy();
+            makeHls(video, url, onReady);
+          }, 3000);
         }
       });
       return hls;
     }
   }
 
-  // ── Grid ──
+  // ── Grid: inicializa cada câmera ──
   const gridHls = [];
   for (let i = 0; i < NUM_CAMS; i++) {
     const video = document.getElementById(`v${i}`);
     const loading = document.getElementById(`loading${i}`);
     const status = document.getElementById(`status${i}`);
-    gridHls.push(makeHls(video, streams[i], () => {
+
+    const hls = makeHls(video, streams[i], () => {
       loading.classList.add('hidden');
       status.classList.add('live');
-    }));
+    });
+
+    gridHls.push(hls);
   }
 
-  // ── Fullscreen: crossfade entre câmeras (sem tela preta) ──
-  const fsEl = document.getElementById('fullscreen');
-  const fsLabelEl = document.getElementById('fs-label');
-  let fsActive = null;   // { video, hls }
+  // ── Toggle ──
+  let mode = 'grid';
   let currentCam = 0;
   let rotateTimer = null;
-  let mode = 'grid';
-
-  function makeFsVideo() {
-    const v = document.createElement('video');
-    v.autoplay = true; v.muted = true; v.setAttribute('playsinline', '');
-    v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.4s;pointer-events:none;';
-    fsEl.appendChild(v);
-    return v;
-  }
-
-  function switchTo(idx) {
-    currentCam = idx;
-    fsLabelEl.textContent = `CAM ${idx + 1}`;
-    updateDots(idx);
-    startProgress();
-
-    const v = makeFsVideo();
-    const h = makeHls(v, streams[idx], () => fadeIn());
-    setTimeout(fadeIn, 2500); // fallback: mostra mesmo se demorar
-
-    function fadeIn() {
-      if (v.style.opacity === '1') return; // já mostrado
-      v.style.opacity = '1';
-      if (fsActive) {
-        const old = fsActive;
-        setTimeout(() => {
-          old.video.style.opacity = '0';
-          setTimeout(() => {
-            if (old.hls) old.hls.destroy();
-            fsEl.removeChild(old.video);
-          }, 450);
-        }, 50);
-      }
-      fsActive = { video: v, hls: h };
-    }
-  }
+  let fsHls = null;
 
   const toggleTrack = document.getElementById('toggle-track');
-  const toggleText  = document.getElementById('toggle-text');
+  const toggleText = document.getElementById('toggle-text');
   const modeLabelEl = document.getElementById('mode-label');
-  const gridEl      = document.getElementById('grid');
-  const dotsEl      = document.getElementById('dots');
-  const progressEl  = document.getElementById('progress-bar');
+  const gridEl = document.getElementById('grid');
+  const fsEl = document.getElementById('fullscreen');
+  const fsVideo = document.getElementById('vfs');
+  const fsLabelEl = document.getElementById('fs-label');
+  const dotsEl = document.getElementById('dots');
+  const progressEl = document.getElementById('progress-bar');
+  const overlayEl = document.getElementById('fs-overlay');
 
+  // Cria dots
   for (let i = 0; i < NUM_CAMS; i++) {
     const dot = document.createElement('div');
     dot.className = 'dot' + (i === 0 ? ' active' : '');
@@ -403,7 +392,9 @@
   }
 
   function updateDots(idx) {
-    dotsEl.querySelectorAll('.dot').forEach((d, i) => d.classList.toggle('active', i === idx));
+    dotsEl.querySelectorAll('.dot').forEach((d, i) => {
+      d.classList.toggle('active', i === idx);
+    });
   }
 
   function startProgress() {
@@ -415,14 +406,32 @@
     }));
   }
 
+  function fadeTo(idx) {
+    overlayEl.classList.add('fading');
+    setTimeout(() => {
+      currentCam = idx;
+      fsLabelEl.textContent = `CAM ${idx + 1}`;
+      updateDots(idx);
+      startProgress();
+
+      if (fsHls) { fsHls.destroy(); fsHls = null; }
+      fsHls = makeHls(fsVideo, streams[idx], () => {});
+
+      overlayEl.classList.remove('fading');
+    }, 300);
+  }
+
   function startRotation() {
-    switchTo(currentCam);
-    rotateTimer = setInterval(() => switchTo((currentCam + 1) % NUM_CAMS), ROTATE_MS);
+    fadeTo(currentCam);
+    rotateTimer = setInterval(() => {
+      fadeTo((currentCam + 1) % NUM_CAMS);
+    }, ROTATE_MS);
   }
 
   function stopRotation() {
-    clearInterval(rotateTimer); rotateTimer = null;
-    if (fsActive) { if (fsActive.hls) fsActive.hls.destroy(); fsEl.removeChild(fsActive.video); fsActive = null; }
+    clearInterval(rotateTimer);
+    rotateTimer = null;
+    if (fsHls) { fsHls.destroy(); fsHls = null; }
   }
 
   document.getElementById('toggle-wrap').addEventListener('click', () => {

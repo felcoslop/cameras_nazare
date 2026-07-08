@@ -8,7 +8,6 @@ const HTTP_PORT = parseInt(process.env.PORT) || 8080;
 const ROTATE_SECONDS = parseInt(process.env.ROTATE_SECONDS) || 10;
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
 const STREAMS_DIR = path.join(__dirname, 'streams');
-const WATCHDOG_MS = 12000; // reinicia se stream travar por 12s
 
 const cameras = [
   { id: 'cam1', url: process.env.CAM1_URL },
@@ -34,13 +33,12 @@ function startFFmpeg(cam) {
   const proc = spawn(FFMPEG, [
     '-fflags', 'nobuffer',
     '-rtsp_transport', 'tcp',
-    '-timeout', '5000000',
     '-i', cam.url,
     '-c:v', 'copy',
     '-an',
     '-f', 'hls',
     '-hls_time', '1',
-    '-hls_list_size', '2',
+    '-hls_list_size', '3',
     '-hls_flags', 'delete_segments+append_list',
     '-hls_segment_filename', segPattern,
     playlist,
@@ -53,21 +51,9 @@ function startFFmpeg(cam) {
     }
   });
 
-  // Watchdog: reinicia se o arquivo não for atualizado
-  const watchdog = setInterval(() => {
-    try {
-      const stat = fs.statSync(playlist);
-      if (Date.now() - stat.mtimeMs > WATCHDOG_MS) {
-        console.log(`[${cam.id}] Stream travado, reiniciando...`);
-        proc.kill();
-      }
-    } catch (_) {}
-  }, 5000);
-
   proc.on('close', (code) => {
-    clearInterval(watchdog);
-    console.log(`[${cam.id}] Encerrado (${code}), reiniciando em 3s...`);
-    setTimeout(() => startFFmpeg(cam), 3000);
+    console.log(`[${cam.id}] Encerrado (${code}), reiniciando em 5s...`);
+    setTimeout(() => startFFmpeg(cam), 5000);
   });
 }
 
