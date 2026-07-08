@@ -329,10 +329,16 @@
     // Fallback: hls.js (Chrome, Firefox, Android)
     if (Hls.isSupported()) {
       const hls = new Hls({
-        lowLatencyMode: true,
-        liveSyncDurationCount: 1,
-        liveMaxLatencyDurationCount: 3,
-        maxBufferLength: 4,
+        lowLatencyMode: false,
+        liveSyncDurationCount: 3,      // buffer de ~3 segmentos: absorve oscilação de banda
+        liveMaxLatencyDurationCount: 8,
+        maxBufferLength: 12,
+        maxMaxBufferLength: 24,
+        backBufferLength: 6,
+        fragLoadingMaxRetry: 8,
+        manifestLoadingMaxRetry: 8,
+        levelLoadingMaxRetry: 8,
+        fragLoadingRetryDelay: 1000,
       });
       hls.loadSource(url);
       hls.attachMedia(video);
@@ -341,31 +347,59 @@
         if (onReady) onReady();
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
-        if (data.fatal) {
-          setTimeout(() => {
-            hls.destroy();
-            makeHls(video, url, onReady);
-          }, 3000);
+        if (!data.fatal) return;
+        // Tenta recuperar sem recriar tudo (mais rápido que reload total)
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          try { hls.startLoad(); return; } catch (_) {}
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          try { hls.recoverMediaError(); return; } catch (_) {}
         }
+        setTimeout(() => {
+          try { hls.destroy(); } catch (_) {}
+          makeHls(video, url, onReady);
+        }, 3000);
       });
       return hls;
     }
   }
 
-  // ── Grid: inicializa cada câmera ──
-  const gridHls = [];
+  // ── Grid: inicializa cada câmera com recuperação automática de congelamento ──
+  const gridCells = [];
   for (let i = 0; i < NUM_CAMS; i++) {
     const video = document.getElementById(`v${i}`);
     const loading = document.getElementById(`loading${i}`);
     const status = document.getElementById(`status${i}`);
 
-    const hls = makeHls(video, streams[i], () => {
-      loading.classList.add('hidden');
-      status.classList.add('live');
-    });
+    const cell = { video, loading, status, url: streams[i], hls: null, lastProgress: Date.now() };
 
-    gridHls.push(hls);
+    cell.load = () => {
+      if (cell.hls) { try { cell.hls.destroy(); } catch (_) {} cell.hls = null; }
+      cell.lastProgress = Date.now();
+      cell.hls = makeHls(video, cell.url, () => {
+        loading.classList.add('hidden');
+        status.classList.add('live');
+      });
+    };
+
+    // timeupdate só dispara enquanto o vídeo avança de verdade
+    video.addEventListener('timeupdate', () => { cell.lastProgress = Date.now(); });
+
+    cell.load();
+    gridCells.push(cell);
   }
+
+  // Watchdog do navegador: se um quadro congelar por >12s, recarrega só aquela câmera
+  setInterval(() => {
+    if (mode !== 'grid') return;
+    const now = Date.now();
+    gridCells.forEach(cell => {
+      if (now - cell.lastProgress > 12000) {
+        cell.status.classList.remove('live');
+        cell.loading.classList.remove('hidden');
+        cell.load();
+      }
+    });
+  }, 5000);
 
   // ── Toggle ──
   let mode = 'grid';
