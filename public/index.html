@@ -335,52 +335,65 @@
   }
 
   // ── Grid ──
-  const gridHls = [];
   for (let i = 0; i < NUM_CAMS; i++) {
     const video = document.getElementById(`v${i}`);
     const loading = document.getElementById(`loading${i}`);
     const status = document.getElementById(`status${i}`);
-    gridHls.push(makeHls(video, streams[i], () => {
+    makeHls(video, streams[i], () => {
       loading.classList.add('hidden');
       status.classList.add('live');
-    }));
+    });
   }
 
-  // ── Fullscreen: pré-carrega todas as streams agora ──
-  // Evita tela preta na rotação — todos os vídeos ficam rodando em background
-  const fsVideos = [];
+  // ── Fullscreen: crossfade entre câmeras (sem tela preta) ──
   const fsEl = document.getElementById('fullscreen');
-
-  for (let i = 0; i < NUM_CAMS; i++) {
-    const v = document.createElement('video');
-    v.autoplay = true;
-    v.muted = true;
-    v.setAttribute('playsinline', '');
-    v.style.cssText = `
-      position: absolute; inset: 0;
-      width: 100%; height: 100%;
-      object-fit: cover;
-      opacity: 0;
-      transition: opacity 0.25s;
-      pointer-events: none;
-    `;
-    fsEl.appendChild(v);
-    makeHls(v, streams[i], null);
-    fsVideos.push(v);
-  }
-
-  // ── Toggle ──
-  let mode = 'grid';
+  const fsLabelEl = document.getElementById('fs-label');
+  let fsActive = null;   // { video, hls }
   let currentCam = 0;
   let rotateTimer = null;
+  let mode = 'grid';
+
+  function makeFsVideo() {
+    const v = document.createElement('video');
+    v.autoplay = true; v.muted = true; v.setAttribute('playsinline', '');
+    v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.4s;pointer-events:none;';
+    fsEl.appendChild(v);
+    return v;
+  }
+
+  function switchTo(idx) {
+    currentCam = idx;
+    fsLabelEl.textContent = `CAM ${idx + 1}`;
+    updateDots(idx);
+    startProgress();
+
+    const v = makeFsVideo();
+    const h = makeHls(v, streams[idx], () => fadeIn());
+    setTimeout(fadeIn, 2500); // fallback: mostra mesmo se demorar
+
+    function fadeIn() {
+      if (v.style.opacity === '1') return; // já mostrado
+      v.style.opacity = '1';
+      if (fsActive) {
+        const old = fsActive;
+        setTimeout(() => {
+          old.video.style.opacity = '0';
+          setTimeout(() => {
+            if (old.hls) old.hls.destroy();
+            fsEl.removeChild(old.video);
+          }, 450);
+        }, 50);
+      }
+      fsActive = { video: v, hls: h };
+    }
+  }
 
   const toggleTrack = document.getElementById('toggle-track');
-  const toggleText = document.getElementById('toggle-text');
+  const toggleText  = document.getElementById('toggle-text');
   const modeLabelEl = document.getElementById('mode-label');
-  const gridEl = document.getElementById('grid');
-  const fsLabelEl = document.getElementById('fs-label');
-  const dotsEl = document.getElementById('dots');
-  const progressEl = document.getElementById('progress-bar');
+  const gridEl      = document.getElementById('grid');
+  const dotsEl      = document.getElementById('dots');
+  const progressEl  = document.getElementById('progress-bar');
 
   for (let i = 0; i < NUM_CAMS; i++) {
     const dot = document.createElement('div');
@@ -401,23 +414,14 @@
     }));
   }
 
-  function showCam(idx) {
-    currentCam = idx;
-    fsLabelEl.textContent = `CAM ${idx + 1}`;
-    updateDots(idx);
-    startProgress();
-    fsVideos.forEach((v, i) => { v.style.opacity = i === idx ? '1' : '0'; });
-  }
-
   function startRotation() {
-    showCam(currentCam);
-    rotateTimer = setInterval(() => showCam((currentCam + 1) % NUM_CAMS), ROTATE_MS);
+    switchTo(currentCam);
+    rotateTimer = setInterval(() => switchTo((currentCam + 1) % NUM_CAMS), ROTATE_MS);
   }
 
   function stopRotation() {
-    clearInterval(rotateTimer);
-    rotateTimer = null;
-    fsVideos.forEach(v => { v.style.opacity = '0'; });
+    clearInterval(rotateTimer); rotateTimer = null;
+    if (fsActive) { if (fsActive.hls) fsActive.hls.destroy(); fsEl.removeChild(fsActive.video); fsActive = null; }
   }
 
   document.getElementById('toggle-wrap').addEventListener('click', () => {
