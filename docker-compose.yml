@@ -2,12 +2,8 @@ services:
   cameras:
     build: .
     ports:
-      - "8080:8080"   # interface web
-      - "1935:1935"   # RTMP (câmeras empurram aqui)
-    environment:
-      PORT: 8080
-      ROTATE_SECONDS: 10
-      PUBLIC_HOST: 162.243.185.189
+      - "8080:8080"
+    env_file: .env
     volumes:
       - streams:/app/streams
     restart: unless-stopped
