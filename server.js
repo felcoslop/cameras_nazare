@@ -52,8 +52,8 @@ function startFFmpeg(cam) {
   });
 
   proc.on('close', (code) => {
-    console.log(`[${cam.id}] Encerrado (${code}), reiniciando em 5s...`);
-    setTimeout(() => startFFmpeg(cam), 5000);
+    console.log(`[${cam.id}] Encerrado (${code}), reiniciando em 15s...`);
+    setTimeout(() => startFFmpeg(cam), 15000);
   });
 }
 
