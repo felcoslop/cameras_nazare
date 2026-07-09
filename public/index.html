@@ -371,36 +371,42 @@
     const loading = document.getElementById(`loading${i}`);
     const status = document.getElementById(`status${i}`);
 
-    const cell = { video, loading, status, url: streams[i], hls: null, lastProgress: Date.now() };
+    // highWater = maior ponto que o vídeo JÁ alcançou; lastAdvance = quando ele passou disso
+    const cell = { video, loading, status, url: streams[i], hls: null, highWater: 0, lastAdvance: Date.now() };
 
     cell.load = () => {
       if (cell.hls) { try { cell.hls.destroy(); } catch (_) {} cell.hls = null; }
-      cell.lastProgress = Date.now();
+      cell.highWater = 0;
+      cell.lastAdvance = Date.now();
       cell.hls = makeHls(video, cell.url, () => {
         loading.classList.add('hidden');
         status.classList.add('live');
       });
     };
 
-    // timeupdate só dispara enquanto o vídeo avança de verdade
-    video.addEventListener('timeupdate', () => { cell.lastProgress = Date.now(); });
-
     cell.load();
     gridCells.push(cell);
   }
 
-  // Watchdog do navegador: se um quadro congelar por >20s, recarrega só aquela câmera
+  // Watchdog do navegador: mede PROGRESSO PRA FRENTE (não só "movimento").
+  // Um replay em loop repete os mesmos segundos sem avançar o highWater → é detectado.
   setInterval(() => {
     if (mode !== 'grid') return;
     const now = Date.now();
     gridCells.forEach(cell => {
-      if (now - cell.lastProgress > 20000) {
+      const t = cell.video.currentTime || 0;
+      if (t > cell.highWater + 0.5) {
+        // avançou de verdade além do ponto máximo já visto
+        cell.highWater = t;
+        cell.lastAdvance = now;
+      } else if (now - cell.lastAdvance > 18000) {
+        // 18s sem passar do ponto máximo = congelado ou em loop → recarrega só esta câmera
         cell.status.classList.remove('live');
         cell.loading.classList.remove('hidden');
         cell.load();
       }
     });
-  }, 5000);
+  }, 3000);
 
   // ── Toggle ──
   let mode = 'grid';
