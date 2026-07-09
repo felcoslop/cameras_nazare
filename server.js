@@ -10,26 +10,35 @@ const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
 const STREAMS_DIR = path.join(__dirname, 'streams');
 
 // Reinicia o FFmpeg se a playlist não for atualizada por esse tempo (stream congelado)
-const STALE_MS = 15000;
+const STALE_MS = 22000;
 // Considera a conexão "saudável" se rodou pelo menos esse tempo (reseta o backoff)
 const HEALTHY_MS = 40000;
 // Backoff: 1ª falha rápida = 5s, depois dobra até no máximo 60s (evita floodar o roteador)
 const BASE_RETRY_MS = 5000;
 const MAX_RETRY_MS = 60000;
 
-// USE_SUBSTREAM=true troca subtype=0 (alta) por subtype=1 (baixa) — corta muito a banda
-const USE_SUBSTREAM = /^(1|true|yes)$/i.test(process.env.USE_SUBSTREAM || '');
-function applyStream(url) {
-  if (!url) return url;
-  return USE_SUBSTREAM ? url.replace(/subtype=0/i, 'subtype=1') : url;
+// Por padrão usa o substream (subtype=1): muito mais leve para sair pela internet até a VM.
+// O app Mibo é fluido porque roda na rede LOCAL; a VM é remota e depende do upload.
+// Defina HD=true no ambiente para forçar alta resolução (subtype=0).
+const USE_HD = /^(1|true|yes)$/i.test(process.env.HD || '');
+
+// Cada câmera guarda as duas qualidades. Começa na preferida; se falhar muito,
+// alterna para a outra automaticamente (evita ficar preto se o substream não existir).
+function build(id, raw) {
+  if (!raw) return null;
+  return {
+    id,
+    hd: raw.replace(/subtype=1/i, 'subtype=0'),
+    sd: raw.replace(/subtype=0/i, 'subtype=1'),
+  };
 }
 
 const cameras = [
-  { id: 'cam1', url: applyStream(process.env.CAM1_URL) },
-  { id: 'cam2', url: applyStream(process.env.CAM2_URL) },
-  { id: 'cam3', url: applyStream(process.env.CAM3_URL) },
-  { id: 'cam4', url: applyStream(process.env.CAM4_URL) },
-].filter(c => c.url);
+  build('cam1', process.env.CAM1_URL),
+  build('cam2', process.env.CAM2_URL),
+  build('cam3', process.env.CAM3_URL),
+  build('cam4', process.env.CAM4_URL),
+].filter(Boolean);
 
 if (cameras.length === 0) {
   console.error('Nenhuma câmera configurada no .env');
@@ -45,21 +54,26 @@ function startFFmpeg(cam, failCount = 0) {
   const startedAt = Date.now();
   let killedByWatchdog = false;
 
-  console.log(`[${cam.id}] Conectando...`);
+  // Preferência: substream (a menos que HD=true). A cada 3 falhas seguidas, alterna a qualidade.
+  const preferSd = !USE_HD;
+  const useSd = (Math.floor(failCount / 3) % 2 === 0) ? preferSd : !preferSd;
+  const url = useSd ? cam.sd : cam.hd;
+
+  console.log(`[${cam.id}] Conectando (${useSd ? 'substream' : 'alta res'})...`);
 
   const proc = spawn(FFMPEG, [
     // ── Entrada RTSP ──
     '-rtsp_transport', 'tcp',
     '-timeout', '10000000',        // 10s de timeout de socket: não trava eterno em conexão morta
-    '-fflags', 'nobuffer',
-    '-i', cam.url,
+    '-fflags', '+genpts+discardcorrupt',  // regenera timestamps e DESCARTA pacotes corrompidos
+    '-i', url,
     // ── Saída ──
     '-an',
     '-c:v', 'copy',
     '-f', 'hls',
-    '-hls_time', '2',
-    '-hls_list_size', '5',         // janela maior = absorve oscilação de banda sem congelar
-    '-hls_flags', 'delete_segments+append_list+omit_endlist',
+    '-hls_time', '4',              // segmentos maiores toleram GOP grande e perda de pacote
+    '-hls_list_size', '6',
+    '-hls_flags', 'delete_segments+append_list',
     '-hls_segment_filename', segPattern,
     playlist,
   ], { stdio: ['ignore', 'ignore', 'pipe'] });

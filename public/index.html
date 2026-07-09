@@ -330,15 +330,16 @@
     if (Hls.isSupported()) {
       const hls = new Hls({
         lowLatencyMode: false,
-        liveSyncDurationCount: 3,      // buffer de ~3 segmentos: absorve oscilação de banda
-        liveMaxLatencyDurationCount: 8,
-        maxBufferLength: 12,
-        maxMaxBufferLength: 24,
-        backBufferLength: 6,
-        fragLoadingMaxRetry: 8,
-        manifestLoadingMaxRetry: 8,
-        levelLoadingMaxRetry: 8,
+        liveSyncDurationCount: 2,      // ~2 segmentos de folga (segmentos de 4s)
+        liveMaxLatencyDurationCount: 6,
+        maxBufferLength: 20,
+        maxMaxBufferLength: 40,
+        backBufferLength: 10,
+        fragLoadingMaxRetry: 10,
+        manifestLoadingMaxRetry: 10,
+        levelLoadingMaxRetry: 10,
         fragLoadingRetryDelay: 1000,
+        nudgeMaxRetry: 10,
       });
       hls.loadSource(url);
       hls.attachMedia(video);
@@ -388,12 +389,12 @@
     gridCells.push(cell);
   }
 
-  // Watchdog do navegador: se um quadro congelar por >12s, recarrega só aquela câmera
+  // Watchdog do navegador: se um quadro congelar por >20s, recarrega só aquela câmera
   setInterval(() => {
     if (mode !== 'grid') return;
     const now = Date.now();
     gridCells.forEach(cell => {
-      if (now - cell.lastProgress > 12000) {
+      if (now - cell.lastProgress > 20000) {
         cell.status.classList.remove('live');
         cell.loading.classList.remove('hidden');
         cell.load();
