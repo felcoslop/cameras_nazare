@@ -1,6 +1,9 @@
+# Binário estático do MediaMTX (servidor de mídia battle-tested)
+FROM bluenviron/mediamtx:1.9.3 AS mediamtx
+
 FROM node:20-alpine
 
-RUN apk add --no-cache ffmpeg
+COPY --from=mediamtx /mediamtx /usr/local/bin/mediamtx
 
 WORKDIR /app
 
@@ -11,6 +14,5 @@ COPY server.js ./
 COPY public ./public
 
 EXPOSE 8080
-EXPOSE 1935
 
 CMD ["node", "server.js"]
