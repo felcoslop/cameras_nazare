@@ -390,8 +390,9 @@
 
   // Watchdog do navegador: mede PROGRESSO PRA FRENTE (não só "movimento").
   // Um replay em loop repete os mesmos segundos sem avançar o highWater → é detectado.
+  let lastAnyProgress = Date.now();
   setInterval(() => {
-    if (mode !== 'grid') return;
+    if (mode !== 'grid') { lastAnyProgress = Date.now(); return; }
     const now = Date.now();
     gridCells.forEach(cell => {
       const t = cell.video.currentTime || 0;
@@ -399,6 +400,7 @@
         // avançou de verdade além do ponto máximo já visto
         cell.highWater = t;
         cell.lastAdvance = now;
+        lastAnyProgress = now;
       } else if (now - cell.lastAdvance > 18000) {
         // 18s sem passar do ponto máximo = congelado ou em loop → recarrega só esta câmera
         cell.status.classList.remove('live');
@@ -406,6 +408,10 @@
         cell.load();
       }
     });
+    // Última linha de defesa: se NENHUMA câmera avançou por 2 minutos
+    // (player travado geral, navegador da TV dormiu, etc.), recarrega a página
+    // inteira — recomeço 100% limpo, direto no ao vivo.
+    if (now - lastAnyProgress > 120000) location.reload();
   }, 3000);
 
   // ── Toggle ──
