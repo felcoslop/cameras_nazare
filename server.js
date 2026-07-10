@@ -11,17 +11,19 @@ const MEDIAMTX_BIN = process.env.MEDIAMTX_PATH || 'mediamtx';
 const HLS_PORT = 8888; // interno (127.0.0.1), o express faz proxy
 
 // Por padrão usa o substream (subtype=1): muito mais leve para sair pela
-// internet de casa até a VM. Defina HD=true para forçar alta resolução.
-const USE_HD = /^(1|true|yes)$/i.test(process.env.HD || '');
+// internet de casa até a VM. HD=true força alta resolução em todas;
+// CAM1_HD=true (ou CAM2_HD etc.) força só naquela câmera.
+const truthy = v => /^(1|true|yes)$/i.test(v || '');
+const USE_HD = truthy(process.env.HD);
 
 // CAM_HOST (opcional): substitui o host das 4 URLs de uma vez.
 // Ideal para IP dinâmico: aponte para um hostname DDNS (ex: fulano.ddns.net)
 // e nunca mais mexa aqui quando a operadora trocar o IP.
 const CAM_HOST = (process.env.CAM_HOST || '').trim();
 
-function prepare(url) {
+function prepare(url, forceHd) {
   if (!url) return null;
-  let u = USE_HD
+  let u = (USE_HD || forceHd)
     ? url.replace(/subtype=1/i, 'subtype=0')
     : url.replace(/subtype=0/i, 'subtype=1');
   if (CAM_HOST) {
@@ -31,12 +33,10 @@ function prepare(url) {
   return u;
 }
 
-const cameras = [
-  { id: 'cam1', url: prepare(process.env.CAM1_URL) },
-  { id: 'cam2', url: prepare(process.env.CAM2_URL) },
-  { id: 'cam3', url: prepare(process.env.CAM3_URL) },
-  { id: 'cam4', url: prepare(process.env.CAM4_URL) },
-].filter(c => c.url);
+const cameras = [1, 2, 3, 4].map(n => ({
+  id: `cam${n}`,
+  url: prepare(process.env[`CAM${n}_URL`], truthy(process.env[`CAM${n}_HD`])),
+})).filter(c => c.url);
 
 if (cameras.length === 0) {
   console.error('Nenhuma câmera configurada no .env');
