@@ -43,6 +43,11 @@ if (cameras.length === 0) {
   process.exit(1);
 }
 
+// Mostra o endereço EFETIVO de cada câmera (depois do CAM_HOST, senha oculta)
+cameras.forEach(c => {
+  console.log(`[${c.id}] → ${c.url.replace(/\/\/[^@]*@/, '//***@')}`);
+});
+
 // ── Gera a config do MediaMTX ──
 // MediaMTX cuida de tudo: conexão RTSP persistente, reconexão automática,
 // HLS em memória com sequência contínua (o player nunca se perde).
