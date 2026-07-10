@@ -48,6 +48,9 @@ if (cameras.length === 0) {
 // HLS em memória com sequência contínua (o player nunca se perde).
 const mtxConfig = [
   'logLevel: info',
+  // Tolera pausas de até 30s no fluxo antes de derrubar a conexão —
+  // câmeras em Wi-Fi fraco engasgam por alguns segundos e voltam sozinhas
+  'readTimeout: 30s',
   'rtsp: no',
   'rtmp: no',
   'srt: no',
