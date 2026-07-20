@@ -68,7 +68,7 @@ const mtxConfig = [
   `hlsAddress: 127.0.0.1:${HLS_PORT}`,
   "hlsAllowOrigin: '*'",
   'hlsVariant: mpegts',
-  'hlsSegmentCount: 7',
+  'hlsSegmentCount: 10',
   'hlsSegmentDuration: 2s',
   'paths:',
   ...cameras.flatMap(cam => [
@@ -82,9 +82,12 @@ const configPath = path.join(__dirname, 'mediamtx.yml');
 fs.writeFileSync(configPath, mtxConfig);
 
 // ── Sobe o MediaMTX (e ressuscita se cair) ──
+let mtxProc = null;
+
 function startMediaMTX() {
   console.log(`[mediamtx] Iniciando (${USE_HD ? 'alta res' : 'substream'}, ${cameras.length} câmeras)...`);
   const proc = spawn(MEDIAMTX_BIN, [configPath], { stdio: ['ignore', 'pipe', 'pipe'] });
+  mtxProc = proc;
 
   const logLine = (d) => {
     d.toString().split('\n').forEach(line => {
@@ -95,11 +98,92 @@ function startMediaMTX() {
   proc.stderr.on('data', logLine);
 
   proc.on('close', (code) => {
+    if (mtxProc === proc) mtxProc = null;
     console.error(`[mediamtx] Encerrado (${code}), reiniciando em 5s...`);
     setTimeout(startMediaMTX, 5000);
   });
 }
 startMediaMTX();
+
+// ── Watchdog de produção de vídeo ──
+// Pega o caso "zumbi": a conexão RTSP fica de pé, mas a câmera para de entregar
+// quadros — a playlist HLS congela e a tela fica preta pra sempre. A verificação
+// é local (playlist interna), não gera NENHUMA conexão extra com as câmeras.
+// Escada de recuperação, sempre suave com as portas do roteador:
+//   1. playlist parada por 90s → reinicia o MediaMTX (1 reconexão por câmera,
+//      no máximo a cada 5 minutos — sem flood);
+//   2. se a mesma câmera continuar presa após 2 reinícios, com outra câmera
+//      saudável (prova de que a rede da VM funciona), encerra o processo —
+//      o EasyPanel sobe o container limpo, que foi o que resolveu manualmente.
+const POLL_MS = 15000;
+const STALL_MS = 90000;
+const MTX_RESTART_COOLDOWN_MS = 5 * 60 * 1000;
+const bootTime = Date.now();
+let lastMtxRestart = 0;
+let watchdogBusy = false;
+
+const camHealth = new Map(cameras.map(c => [c.id, {
+  seq: -1, sig: '', lastAdvance: Date.now(), restartsWhileStalled: 0,
+}]));
+
+function fetchPlaylist(camId) {
+  return new Promise(resolve => {
+    const req = http.get(
+      { host: '127.0.0.1', port: HLS_PORT, path: `/${camId}/index.m3u8`, timeout: 5000 },
+      (res) => {
+        let body = '';
+        res.on('data', d => { body += d; });
+        res.on('end', () => resolve(res.statusCode === 200 ? body : null));
+      }
+    );
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+  });
+}
+
+setInterval(async () => {
+  if (watchdogBusy) return;
+  watchdogBusy = true;
+  try {
+    const bodies = await Promise.all(cameras.map(c => fetchPlaylist(c.id)));
+    const now = Date.now();
+
+    cameras.forEach((cam, i) => {
+      const h = camHealth.get(cam.id);
+      const body = bodies[i];
+      if (!body) return;
+      const m = body.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+      const seq = m ? parseInt(m[1]) : -1;
+      // assinatura pega segmento novo mesmo quando a sequência ainda não girou
+      const sig = `${body.length}|${body.slice(-100)}`;
+      if (seq !== h.seq || sig !== h.sig) {
+        h.seq = seq;
+        h.sig = sig;
+        h.lastAdvance = now;
+        h.restartsWhileStalled = 0;
+      }
+    });
+
+    const stalled = cameras.filter(c => now - camHealth.get(c.id).lastAdvance > STALL_MS);
+    if (!stalled.length) return;
+    const healthy = cameras.filter(c => now - camHealth.get(c.id).lastAdvance <= STALL_MS);
+
+    const beyondHelp = stalled.filter(c => camHealth.get(c.id).restartsWhileStalled >= 2);
+    if (beyondHelp.length && healthy.length && now - bootTime > 15 * 60 * 1000) {
+      console.error(`[watchdog] ${beyondHelp.map(c => c.id).join(', ')} sem vídeo mesmo após 2 reinícios do MediaMTX — reiniciando o container`);
+      process.exit(1);
+    }
+
+    if (now - lastMtxRestart < MTX_RESTART_COOLDOWN_MS) return;
+    console.error(`[watchdog] playlist parada em ${stalled.map(c => c.id).join(', ')} há mais de ${STALL_MS / 1000}s — reiniciando MediaMTX (reconexão única por câmera)`);
+    lastMtxRestart = now;
+    stalled.forEach(c => { camHealth.get(c.id).restartsWhileStalled++; });
+    cameras.forEach(c => { camHealth.get(c.id).lastAdvance = now; }); // carência pós-reinício
+    if (mtxProc) { try { mtxProc.kill(); } catch (_) {} } // supervisor religa em 5s
+  } finally {
+    watchdogBusy = false;
+  }
+}, POLL_MS);
 
 // ── Web ──
 const app = express();
