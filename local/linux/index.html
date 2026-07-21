@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Câmeras Nazaré — Local</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #000; overflow: hidden;
+    font-family: system-ui, sans-serif; cursor: none; }
+  #grid { display: grid; width: 100vw; height: 100vh; gap: 2px; background: #111; }
+  .cell { position: relative; background: #0a0a0a; overflow: hidden; }
+  .cell video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .badge { position: absolute; top: 8px; left: 8px; z-index: 2; display: flex;
+    align-items: center; gap: 6px; background: rgba(0,0,0,.5); border-radius: 12px;
+    padding: 3px 10px; color: #eee; font-size: 12px; font-weight: 500; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #e33; transition: background .4s; }
+  .dot.live { background: #22c55e; }
+  .spinner { position: absolute; inset: 0; z-index: 1; display: flex;
+    align-items: center; justify-content: center; }
+  .spinner::after { content: ''; width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.18); border-top-color: #fff;
+    animation: spin 1s linear infinite; }
+  .cell.playing .spinner { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="grid"></div>
+<script>
+(async () => {
+  const grid = document.getElementById('grid');
+  let cfg;
+  try { cfg = await (await fetch('cams.json')).json(); }
+  catch (_) { cfg = { cams: ['cam1','cam2','cam3','cam4'], webrtcPort: 8889 }; }
+
+  const CAMS = cfg.cams || [];
+  // WebRTC do MediaMTX no mesmo host, porta 8889
+  const WHEP = `http://${location.hostname || '127.0.0.1'}:${cfg.webrtcPort || 8889}`;
+
+  const cols = CAMS.length <= 1 ? 1 : CAMS.length <= 4 ? 2 : 3;
+  const rows = Math.ceil(CAMS.length / cols);
+  grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+
+  CAMS.forEach((camId, i) => makeCell(camId, i + 1));
+
+  function makeCell(camId, num) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.innerHTML =
+      `<video autoplay muted playsinline></video>` +
+      `<div class="spinner"></div>` +
+      `<div class="badge"><span class="dot"></span>CAM ${num}</div>`;
+    grid.appendChild(cell);
+
+    const video = cell.querySelector('video');
+    const dot = cell.querySelector('.dot');
+    let pc = null, retryMs = 1500, retryTimer = null;
+    let lastTime = -1, lastProgress = Date.now(), connectedAt = 0;
+
+    video.addEventListener('playing', () => {
+      cell.classList.add('playing'); dot.classList.add('live'); retryMs = 1500;
+    });
+
+    function teardown() {
+      if (pc) { try { pc.close(); } catch (_) {} pc = null; }
+      try { video.srcObject = null; } catch (_) {}
+      cell.classList.remove('playing'); dot.classList.remove('live');
+    }
+    function scheduleRetry() {
+      teardown();
+      if (retryTimer) return;
+      retryTimer = setTimeout(() => { retryTimer = null; connect(); }, retryMs);
+      retryMs = Math.min(retryMs * 1.5, 8000);
+    }
+    async function connect() {
+      teardown();
+      try {
+        pc = new RTCPeerConnection();
+        const mine = pc;
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        pc.addTransceiver('audio', { direction: 'recvonly' });
+        pc.ontrack = (e) => { if (mine === pc && !video.srcObject) video.srcObject = e.streams[0]; };
+        pc.onconnectionstatechange = () => {
+          if (mine === pc && ['failed','disconnected','closed'].includes(mine.connectionState)) scheduleRetry();
+        };
+        await pc.setLocalDescription(await pc.createOffer());
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === 'complete') return resolve();
+          const f = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', f); resolve(); } };
+          pc.addEventListener('icegatheringstatechange', f);
+          setTimeout(resolve, 1500);
+        });
+        const res = await fetch(`${WHEP}/${camId}/whep`, {
+          method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp,
+        });
+        if (!res.ok) throw new Error('WHEP ' + res.status);
+        await pc.setRemoteDescription({ type: 'answer', sdp: await res.text() });
+        connectedAt = Date.now(); lastProgress = Date.now();
+      } catch (_) { scheduleRetry(); }
+    }
+    // vigia: sem quadro novo por 8s → religa
+    setInterval(() => {
+      if (!pc) return;
+      if (video.currentTime > lastTime + 0.15) { lastTime = video.currentTime; lastProgress = Date.now(); }
+      else if (Date.now() - lastProgress > 8000) { lastProgress = Date.now(); scheduleRetry(); }
+    }, 2000);
+    // reconexão preventiva a cada 6h (dias ligado sem vazar memória)
+    setInterval(() => { if (pc && Date.now() - connectedAt > 6*3600*1000) connect(); }, 60000);
+    connect();
+  }
+})();
+</script>
+</body>
+</html>

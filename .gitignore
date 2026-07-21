@@ -4,3 +4,7 @@ streams/
 *.log
 local/mediamtx.yml
 local/mediamtx.exe
+local/linux/cameras.yml
+local/dist/
+local/node_modules/
+local/**/cameras-data/

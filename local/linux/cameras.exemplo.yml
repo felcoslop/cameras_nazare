@@ -1,7 +1,8 @@
 logLevel: info
 
-# Copie este arquivo para "mediamtx.yml" e preencha USUARIO e SENHA
-# (o @ da senha vira %40). Ajuste os IPs se as câmeras mudarem de endereço.
+# Copie para cameras.yml e preencha USUARIO/SENHA (o @ da senha vira %40).
+# Versão local (LAN): WebRTC + main stream (subtype=0) em HD.
+# Notebook fraco travando? troque subtype=0 por subtype=1 (substream, bem mais leve).
 
 rtsp: no
 rtmp: no
