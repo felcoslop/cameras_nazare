@@ -348,7 +348,7 @@
     if (Hls.isSupported()) {
       const hls = new Hls({
         lowLatencyMode: false,
-        liveSyncDurationCount: 3,       // entra ~3 segmentos atrás do vivo: colchão contra engasgos
+        liveSyncDurationCount: 5,       // entra ~10s atrás do vivo: colchão engole engasgos de até ~10s sem congelar
         liveMaxLatencyDurationCount: 10,
         maxBufferLength: 30,
         maxMaxBufferLength: 60,
@@ -413,6 +413,7 @@
       highWater: 0,
       lastAdvance: Date.now(),
       recoveryStage: 0,
+      nudged: false,
     };
 
     cell.load = () => {
@@ -420,6 +421,7 @@
       cell.highWater = 0;
       cell.lastAdvance = Date.now();
       cell.recoveryStage = 0;
+      cell.nudged = false;
       cell.hls = makeHls(video, cell.url, () => {
         loading.classList.add('hidden');
         status.classList.add('live');
@@ -552,6 +554,7 @@
         cell.highWater = t;
         cell.lastAdvance = now;
         cell.recoveryStage = 0;
+        cell.nudged = false;
         lastAnyProgress = now;
       } else if (now - cell.lastAdvance > 18000) {
         // 18s sem passar do ponto máximo = congelado ou em loop
@@ -565,6 +568,19 @@
           try { cell.hls.recoverMediaError(); } catch (_) { cell.load(); }
         } else {
           cell.load();
+        }
+      } else if (!cell.nudged && now - cell.lastAdvance > 7500) {
+        // Destrava rápido: congelou mas já TEM vídeo novo baixado → pula
+        // direto pro vivo (o mesmo efeito do refresh manual, sem piscar).
+        // Uma vez por episódio; se não resolver, a escada de 18s assume.
+        const b = cell.video.buffered;
+        const end = b.length ? b.end(b.length - 1) : 0;
+        if (end > cell.video.currentTime + 2) {
+          cell.nudged = true;
+          seekToLive(cell.video, cell.hls);
+          cell.video.play().catch(() => {});
+          // o salto em si não conta como progresso — só reprodução real conta
+          cell.highWater = Math.max(cell.highWater, cell.video.currentTime);
         }
       }
     });
