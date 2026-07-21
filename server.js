@@ -60,7 +60,10 @@ const mtxConfig = [
   'rtmp: no',
   'srt: no',
   'webrtc: no',
-  'api: no',
+  // API local: usada só pelo watchdog para religar UMA câmera travada
+  // sem derrubar as outras (nunca exposta pra fora)
+  'api: yes',
+  'apiAddress: 127.0.0.1:9997',
   'metrics: no',
   'pprof: no',
   'playback: no',
@@ -110,21 +113,52 @@ startMediaMTX();
 // quadros — a playlist HLS congela e a tela fica preta pra sempre. A verificação
 // é local (playlist interna), não gera NENHUMA conexão extra com as câmeras.
 // Escada de recuperação, sempre suave com as portas do roteador:
-//   1. playlist parada por 90s → reinicia o MediaMTX (1 reconexão por câmera,
-//      no máximo a cada 5 minutos — sem flood);
-//   2. se a mesma câmera continuar presa após 2 reinícios, com outra câmera
-//      saudável (prova de que a rede da VM funciona), encerra o processo —
-//      o EasyPanel sobe o container limpo, que foi o que resolveu manualmente.
+//   1. playlist parada por 45s → religa SÓ aquela câmera pela API local
+//      (1 reconexão RTSP daquela câmera; as outras não são tocadas);
+//   2. religou 2x e continua presa → reinicia o MediaMTX inteiro
+//      (no máximo a cada 5 minutos — sem flood);
+//   3. mesmo assim presa após 2 reinícios, com outra câmera saudável (prova
+//      de que a rede da VM funciona), encerra o processo — o EasyPanel sobe
+//      o container limpo, que foi o que resolveu manualmente.
 const POLL_MS = 15000;
-const STALL_MS = 90000;
+const STALL_MS = 45000;
+const KICK_COOLDOWN_MS = 2 * 60 * 1000;
 const MTX_RESTART_COOLDOWN_MS = 5 * 60 * 1000;
 const bootTime = Date.now();
 let lastMtxRestart = 0;
 let watchdogBusy = false;
 
 const camHealth = new Map(cameras.map(c => [c.id, {
-  seq: -1, sig: '', lastAdvance: Date.now(), restartsWhileStalled: 0,
+  seq: -1, sig: '', lastAdvance: Date.now(),
+  lastKick: 0, kicksWhileStalled: 0, restartsWhileStalled: 0,
 }]));
+
+function apiRequest(method, apiPath, bodyObj) {
+  return new Promise(resolve => {
+    const body = bodyObj ? JSON.stringify(bodyObj) : null;
+    const req = http.request(
+      {
+        host: '127.0.0.1', port: 9997, path: apiPath, method, timeout: 5000,
+        headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {},
+      },
+      (res) => { res.resume(); res.on('end', () => resolve(res.statusCode < 300)); }
+    );
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(false));
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+// Recria só o path da câmera na config do MediaMTX: derruba a conexão RTSP
+// presa e abre UMA nova, sem afetar as demais câmeras.
+async function kickCamera(cam) {
+  await apiRequest('DELETE', `/v3/config/paths/delete/${cam.id}`);
+  return apiRequest('POST', `/v3/config/paths/add/${cam.id}`, {
+    source: cam.url,
+    rtspTransport: 'tcp',
+  });
+}
 
 function fetchPlaylist(camId) {
   return new Promise(resolve => {
@@ -160,6 +194,7 @@ setInterval(async () => {
         h.seq = seq;
         h.sig = sig;
         h.lastAdvance = now;
+        h.kicksWhileStalled = 0;
         h.restartsWhileStalled = 0;
       }
     });
@@ -168,16 +203,36 @@ setInterval(async () => {
     if (!stalled.length) return;
     const healthy = cameras.filter(c => now - camHealth.get(c.id).lastAdvance <= STALL_MS);
 
-    const beyondHelp = stalled.filter(c => camHealth.get(c.id).restartsWhileStalled >= 2);
+    // Degrau 1: religa individualmente cada câmera travada (cirúrgico)
+    for (const cam of stalled) {
+      const h = camHealth.get(cam.id);
+      if (h.kicksWhileStalled < 2 && now - h.lastKick > KICK_COOLDOWN_MS) {
+        h.lastKick = now;
+        h.kicksWhileStalled++;
+        console.error(`[watchdog] ${cam.id} sem segmento novo há ${Math.round((now - h.lastAdvance) / 1000)}s — religando só essa câmera (tentativa ${h.kicksWhileStalled}/2)`);
+        await kickCamera(cam);
+        h.lastAdvance = now; // carência pra reconexão
+      }
+    }
+
+    // Degraus 2 e 3 só quando religar a câmera sozinha já não resolveu
+    const kickExhausted = stalled.filter(c => camHealth.get(c.id).kicksWhileStalled >= 2);
+    if (!kickExhausted.length) return;
+
+    const beyondHelp = kickExhausted.filter(c => camHealth.get(c.id).restartsWhileStalled >= 2);
     if (beyondHelp.length && healthy.length && now - bootTime > 15 * 60 * 1000) {
       console.error(`[watchdog] ${beyondHelp.map(c => c.id).join(', ')} sem vídeo mesmo após 2 reinícios do MediaMTX — reiniciando o container`);
       process.exit(1);
     }
 
     if (now - lastMtxRestart < MTX_RESTART_COOLDOWN_MS) return;
-    console.error(`[watchdog] playlist parada em ${stalled.map(c => c.id).join(', ')} há mais de ${STALL_MS / 1000}s — reiniciando MediaMTX (reconexão única por câmera)`);
+    console.error(`[watchdog] ${kickExhausted.map(c => c.id).join(', ')} continua presa mesmo religada individualmente — reiniciando MediaMTX (reconexão única por câmera)`);
     lastMtxRestart = now;
-    stalled.forEach(c => { camHealth.get(c.id).restartsWhileStalled++; });
+    kickExhausted.forEach(c => {
+      const h = camHealth.get(c.id);
+      h.restartsWhileStalled++;
+      h.kicksWhileStalled = 0; // libera novos kicks no ciclo seguinte
+    });
     cameras.forEach(c => { camHealth.get(c.id).lastAdvance = now; }); // carência pós-reinício
     if (mtxProc) { try { mtxProc.kill(); } catch (_) {} } // supervisor religa em 5s
   } finally {
