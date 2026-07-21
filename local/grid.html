@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Câmeras — Local (tempo real)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+  #grid {
+    display: grid; width: 100vw; height: 100vh;
+    grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px;
+  }
+  .cell { position: relative; background: #0a0a0a; overflow: hidden; cursor: pointer; }
+  .cell video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .badge {
+    position: absolute; top: 8px; left: 8px; z-index: 2;
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(0,0,0,.55); border-radius: 12px; padding: 3px 10px;
+    color: #eee; font: 500 12px system-ui, sans-serif;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #e33; }
+  .dot.live { background: #2ecc71; }
+  .spinner {
+    position: absolute; inset: 0; z-index: 1;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .spinner::after {
+    content: ''; width: 34px; height: 34px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.2); border-top-color: #fff;
+    animation: spin 1s linear infinite;
+  }
+  .cell.playing .spinner { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="grid"></div>
+<script>
+// Player WebRTC (WHEP) direto no MediaMTX local — latência ~0,3s.
+// Todas as câmeras em tempo real = sincronia exata por natureza.
+const CAMS = ['cam1', 'cam2', 'cam3', 'cam4'];
+const WHEP_BASE = 'http://127.0.0.1:8889';
+
+const grid = document.getElementById('grid');
+
+function makeCell(camId) {
+  const cell = document.createElement('div');
+  cell.className = 'cell';
+  cell.innerHTML = `
+    <video autoplay muted playsinline></video>
+    <div class="spinner"></div>
+    <div class="badge"><span class="dot"></span>${camId.toUpperCase()}</div>`;
+  grid.appendChild(cell);
+
+  const video = cell.querySelector('video');
+  const dot = cell.querySelector('.dot');
+  let pc = null;
+  let retryMs = 2000;
+  let lastTime = -1;
+  let lastProgress = Date.now();
+
+  // clique = tela cheia daquela câmera; ESC volta
+  cell.addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else cell.requestFullscreen().catch(() => {});
+  });
+
+  video.addEventListener('playing', () => {
+    cell.classList.add('playing');
+    dot.classList.add('live');
+    retryMs = 2000;
+  });
+
+  function teardown() {
+    if (pc) { try { pc.close(); } catch (_) {} pc = null; }
+    video.srcObject = null;
+    cell.classList.remove('playing');
+    dot.classList.remove('live');
+  }
+
+  async function connect() {
+    teardown();
+    try {
+      pc = new RTCPeerConnection();
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.addTransceiver('audio', { direction: 'recvonly' });
+      pc.ontrack = (e) => { if (!video.srcObject) video.srcObject = e.streams[0]; };
+      const myPc = pc;
+      pc.onconnectionstatechange = () => {
+        if (myPc === pc && ['failed', 'disconnected', 'closed'].includes(myPc.connectionState)) {
+          scheduleRetry();
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      // rede local: coleta de candidatos é instantânea, sem trickle
+      await new Promise((resolve) => {
+        if (pc.iceGatheringState === 'complete') return resolve();
+        const check = () => { if (pc.iceGatheringState === 'complete') { pc.removeEventListener('icegatheringstatechange', check); resolve(); } };
+        pc.addEventListener('icegatheringstatechange', check);
+        setTimeout(resolve, 2000);
+      });
+
+      const res = await fetch(`${WHEP_BASE}/${camId}/whep`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp' },
+        body: pc.localDescription.sdp,
+      });
+      if (!res.ok) throw new Error(`WHEP ${res.status}`);
+      await pc.setRemoteDescription({ type: 'answer', sdp: await res.text() });
+      lastProgress = Date.now();
+    } catch (_) {
+      scheduleRetry();
+    }
+  }
+
+  let retryTimer = null;
+  function scheduleRetry() {
+    if (retryTimer) return;
+    teardown();
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      connect();
+    }, retryMs);
+    retryMs = Math.min(retryMs * 1.5, 10000); // recuo suave, sem flood
+  }
+
+  // vigia: sem quadro novo por 8s = religa a conexão
+  setInterval(() => {
+    if (!pc) return;
+    if (video.currentTime > lastTime + 0.2) {
+      lastTime = video.currentTime;
+      lastProgress = Date.now();
+    } else if (Date.now() - lastProgress > 8000) {
+      lastProgress = Date.now();
+      scheduleRetry();
+    }
+  }, 2000);
+
+  connect();
+}
+
+CAMS.forEach(makeCell);
+</script>
+</body>
+</html>

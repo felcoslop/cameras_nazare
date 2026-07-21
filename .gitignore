@@ -2,3 +2,5 @@ node_modules/
 streams/
 .env
 *.log
+local/mediamtx.yml
+local/mediamtx.exe

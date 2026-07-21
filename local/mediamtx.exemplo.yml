@@ -1,0 +1,31 @@
+logLevel: info
+
+# Copie este arquivo para "mediamtx.yml" e preencha USUARIO e SENHA
+# (o @ da senha vira %40). Ajuste os IPs se as câmeras mudarem de endereço.
+
+rtsp: no
+rtmp: no
+srt: no
+hls: no
+api: no
+metrics: no
+pprof: no
+playback: no
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigin: '*'
+
+paths:
+  cam1:
+    source: rtsp://USUARIO:SENHA@192.168.15.3:554/cam/realmonitor?channel=1&subtype=0
+    rtspTransport: tcp
+  cam2:
+    source: rtsp://USUARIO:SENHA@192.168.15.4:554/cam/realmonitor?channel=1&subtype=0
+    rtspTransport: tcp
+  cam3:
+    source: rtsp://USUARIO:SENHA@192.168.15.5:554/cam/realmonitor?channel=1&subtype=0
+    rtspTransport: tcp
+  cam4:
+    source: rtsp://USUARIO:SENHA@192.168.15.6:554/cam/realmonitor?channel=1&subtype=0
+    rtspTransport: tcp
