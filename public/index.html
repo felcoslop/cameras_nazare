@@ -348,8 +348,11 @@
     if (Hls.isSupported()) {
       const hls = new Hls({
         lowLatencyMode: false,
-        liveSyncDurationCount: 5,       // entra ~10s atrás do vivo: colchão engole engasgos de até ~10s sem congelar
-        liveMaxLatencyDurationCount: 10,
+        // Alvo em SEGUNDOS, não em segmentos: quando o Wi-Fi da câmera degrada,
+        // os segmentos incham (2s → 30-100s) e "N segmentos atrás" viraria
+        // minutos de atraso. Em segundos, fica ~10s atrás do vivo sempre.
+        liveSyncDuration: 10,
+        liveMaxLatencyDuration: 30,
         maxBufferLength: 30,
         maxMaxBufferLength: 60,
         backBufferLength: 10,
@@ -486,7 +489,7 @@
     if (suspended || document.hidden) return;
 
     const players = mode === 'grid'
-      ? gridCells.map(c => ({ video: c.video, hls: c.hls }))
+      ? gridCells.map(c => ({ video: c.video, hls: c.hls, cell: c }))
       : (fsHls ? [{ video: fsVideo, hls: fsHls }] : []);
 
     const actives = players.filter(p => p.video.readyState >= 2 && !p.video.paused);
@@ -511,6 +514,14 @@
       const cushion = end - video.currentTime;              // buffer à frente
       const pd = pds.get(p);
       const lag = (pd != null && leadPd != null) ? (leadPd - pd) / 1000 : 0;
+
+      // Atraso absurdo (segmentos gigantes por keyframe raro): micro-ajuste
+      // não alcança nunca — recria o player, que reentra ~10s atrás do vivo
+      if (lag > 25 && p.cell && Date.now() - (p.cell.lastFullReload || 0) > 30000) {
+        p.cell.lastFullReload = Date.now();
+        p.cell.load();
+        continue;
+      }
 
       let rate = 1;
       if (lag > 0.75) rate = 1 + Math.min(0.12, lag * 0.04); // corre atrás das outras
