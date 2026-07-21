@@ -131,6 +131,7 @@ let watchdogBusy = false;
 const camHealth = new Map(cameras.map(c => [c.id, {
   seq: -1, sig: '', lastAdvance: Date.now(),
   lastKick: 0, kicksWhileStalled: 0, restartsWhileStalled: 0,
+  bloatPolls: 0, lastBloatKick: 0,
 }]));
 
 function apiRequest(method, apiPath, bodyObj) {
@@ -160,10 +161,10 @@ async function kickCamera(cam) {
   });
 }
 
-function fetchPlaylist(camId) {
+function httpGet(pathName) {
   return new Promise(resolve => {
     const req = http.get(
-      { host: '127.0.0.1', port: HLS_PORT, path: `/${camId}/index.m3u8`, timeout: 5000 },
+      { host: '127.0.0.1', port: HLS_PORT, path: pathName, timeout: 5000 },
       (res) => {
         let body = '';
         res.on('data', d => { body += d; });
@@ -173,6 +174,17 @@ function fetchPlaylist(camId) {
     req.on('timeout', () => { req.destroy(); resolve(null); });
     req.on('error', () => resolve(null));
   });
+}
+
+// A playlist que interessa é a de MÍDIA (com #EXTINF dos segmentos), não a de
+// índice — o index.m3u8 é multivariante e mal muda mesmo com o stream parado.
+async function fetchPlaylist(camId) {
+  const idx = await httpGet(`/${camId}/index.m3u8`);
+  if (!idx) return null;
+  if (idx.includes('#EXTINF')) return idx;
+  const m = idx.match(/^([^#\s]+\.m3u8)\s*$/m);
+  if (!m) return idx;
+  return httpGet(`/${camId}/${m[1]}`);
 }
 
 setInterval(async () => {
@@ -196,6 +208,19 @@ setInterval(async () => {
         h.lastAdvance = now;
         h.kicksWhileStalled = 0;
         h.restartsWhileStalled = 0;
+      }
+
+      // Modo degradado: a câmera "adaptativa" esticou o keyframe e os
+      // segmentos incharam (2-4s viram 16-100s) — o vídeo anda, mas minutos
+      // atrasado e aos trancos. Religar a conexão costuma resetar o encoder.
+      const durs = [...body.matchAll(/#EXTINF:([\d.]+)/g)].map(x => parseFloat(x[1]));
+      const lastDur = durs.length ? durs[durs.length - 1] : 0;
+      h.bloatPolls = lastDur >= 15 ? h.bloatPolls + 1 : 0;
+      if (h.bloatPolls >= 2 && now - h.lastBloatKick > 10 * 60 * 1000) {
+        h.lastBloatKick = now;
+        h.bloatPolls = 0;
+        console.error(`[watchdog] ${cam.id} em modo degradado (segmentos de ${Math.round(lastDur)}s, keyframe raro) — religando só essa câmera pra resetar o encoder`);
+        kickCamera(cam);
       }
     });
 

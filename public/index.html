@@ -515,9 +515,13 @@
       const pd = pds.get(p);
       const lag = (pd != null && leadPd != null) ? (leadPd - pd) / 1000 : 0;
 
-      // Atraso absurdo (segmentos gigantes por keyframe raro): micro-ajuste
-      // não alcança nunca — recria o player, que reentra ~10s atrás do vivo
-      if (lag > 25 && p.cell && Date.now() - (p.cell.lastFullReload || 0) > 30000) {
+      // Ficou minutos atrás DO PRÓPRIO stream (há vídeo mais novo disponível
+      // que o player não está mostrando): recria e reentra ~10s atrás do vivo.
+      // Medido contra a própria borda, não contra a líder — se a CÂMERA é que
+      // está mandando conteúdo velho, recriar não ajuda e não deve looping.
+      const edgePos = (p.hls && isFinite(p.hls.liveSyncPosition)) ? p.hls.liveSyncPosition : null;
+      if (edgePos != null && edgePos - video.currentTime > 25 &&
+          p.cell && Date.now() - (p.cell.lastFullReload || 0) > 30000) {
         p.cell.lastFullReload = Date.now();
         p.cell.load();
         continue;
